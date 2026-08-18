@@ -1,185 +1,141 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <TinyGPSPlus.h>
-#include <Wire.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_HMC5883_U.h>
 
-// -------- LoRa Pins --------
+// -------- LoRa Pins (ESP32) --------
 #define SS 5
 #define RST 14
 #define DIO0 26
 
-// -------- GPS Pins --------
+// -------- GPS Pins (ESP32 Hardware Serial 2) --------
 #define GPS_RX 16
 #define GPS_TX 17
 #define GPS_BAUD 9600
 TinyGPSPlus gps;
 
-// -------- Compass Pins --------
-#define SDA_PIN 21
-#define SCL_PIN 22
-Adafruit_HMC5883_Unified compass = Adafruit_HMC5883_Unified(12345);
-bool compassFound = false;
-float X_OFFSET = 0.0, Y_OFFSET = 0.0;
+// -------- Green LED Pin --------
+#define GREEN_LED_PIN 25  // Connect a Green LED to GPIO 25
 
-// -------- Destination (change to your hospital/base) --------
-const double DEST_LAT = 9.500000;   // e.g., hospital lat
-const double DEST_LON = 77.520000;  // e.g., hospital lon
+// -------- Transmission Settings --------
+String targetUnit = "N01";               // Default target ID
+bool isSending = true;                   // Starts sending immediately
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 1000; // Send packet every 1 second
 
-// -------- Transmission settings --------
-String targetUnit = "N01";     // default target (change as needed)
-bool isSending = true;
-unsigned long lastSend = 0;
-const unsigned long interval = 1000;   // send every 1 sec
-
-// ========== Compass calibration ==========
-void calibrateCompass() {
-  if (!compassFound) return;
-  Serial.println("Calibrating compass... Rotate 360° slowly for 5 sec.");
-  float minX = 9999, maxX = -9999, minY = 9999, maxY = -9999;
-  unsigned long start = millis();
-  while (millis() - start < 5000) {
-    sensors_event_t e;
-    compass.getEvent(&e);
-    if (e.magnetic.x < minX) minX = e.magnetic.x;
-    if (e.magnetic.x > maxX) maxX = e.magnetic.x;
-    if (e.magnetic.y < minY) minY = e.magnetic.y;
-    if (e.magnetic.y > maxY) maxY = e.magnetic.y;
-    delay(50);
-  }
-  X_OFFSET = (minX + maxX) / 2.0;
-  Y_OFFSET = (minY + maxY) / 2.0;
-  Serial.print("Calibration done: X_OFFSET="); Serial.print(X_OFFSET);
-  Serial.print("  Y_OFFSET="); Serial.println(Y_OFFSET);
+// ========== Convert GPS Course (Degrees) to Cardinal Direction ==========
+String getCardinalDirection(double courseDeg) {
+  const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  int index = (int)((courseDeg + 22.5) / 45.0) % 8;
+  return String(directions[index]);
 }
 
-// ========== 4‑direction from heading ==========
-String getDirection4(float headingDeg) {
-  const char* dirs[] = {"N", "E", "S", "W"};
-  int idx = (int)((headingDeg + 45.0) / 90.0) % 4;
-  return String(dirs[idx]);
-}
-
-// ========== Bearing between two points ==========
-double bearingTo(double lat1, double lon1, double lat2, double lon2) {
-  double dLon = radians(lon2 - lon1);
-  double y = sin(dLon) * cos(radians(lat2));
-  double x = cos(radians(lat1)) * sin(radians(lat2)) -
-             sin(radians(lat1)) * cos(radians(lat2)) * cos(dLon);
-  double brng = atan2(y, x);
-  brng = degrees(brng);
-  if (brng < 0) brng += 360.0;
-  return brng;
-}
-
-// ========== Get direction to destination ==========
-String getDirectionToDest(double lat, double lon) {
-  double bearing = bearingTo(lat, lon, DEST_LAT, DEST_LON);
-  return getDirection4(bearing);
-}
-
-// ========== Setup ==========
 void setup() {
   Serial.begin(115200);
-
-  // GPS
+  delay(1000);
+  
+  // Initialize LED
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  digitalWrite(GREEN_LED_PIN, HIGH); // Turn ON by default
+  
+  // Initialize GPS Serial
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
-
-  // Compass
-  Wire.begin(SDA_PIN, SCL_PIN);
-  compassFound = compass.begin();
-  if (compassFound) calibrateCompass();
-
-  // LoRa
+  
+  // Initialize LoRa
   SPI.begin(18, 19, 23, SS);
   LoRa.setPins(SS, RST, DIO0);
-
+  
   if (!LoRa.begin(433E6)) {
-    Serial.println("LoRa Fail");
-    while (1);
+    Serial.println("[ERROR] LoRa Initialization FAILED! Check wiring.");
+    while (1); // Halt execution if LoRa fails
   }
-
-  Serial.println("Transmitter Ready (GPS + Compass)");
-  Serial.println("Commands: N01-START or N01-END");
+  
+  Serial.println("=========================================");
+  Serial.println(" LoRa GPS Transmitter Ready!");
+  Serial.println(" Commands: START, END, N01-START, N01-END");
+  Serial.println("=========================================\n");
 }
 
-// ========== Main Loop ==========
 void loop() {
-  // -------- Serial input for control --------
+  // -------- 1. Handle Serial Commands --------
   if (Serial.available()) {
     String input = Serial.readStringUntil('\n');
-    input.trim();
-
+    input.trim();        // Remove spaces and hidden characters
+    input.toUpperCase(); // Ensure commands are uppercase
+    
     if (input == "END") {
       isSending = false;
-      Serial.println("Transmission STOPPED");
-      return;
-    }
-    if (input == "START") {
+      digitalWrite(GREEN_LED_PIN, LOW); // Turn OFF Green LED
+      Serial.println("[CMD] Transmission STOPPED. Green LED OFF.");
+    } 
+    else if (input == "START") {
       isSending = true;
-      Serial.println("Transmission STARTED");
-      return;
-    }
-
-    int sep = input.indexOf('-');
-    if (sep != -1) {
-      String newTarget = input.substring(0, sep);
-      String command = input.substring(sep + 1);
-      newTarget.trim();
-      command.trim();
-
-      if (command == "START") {
+      digitalWrite(GREEN_LED_PIN, HIGH); // Turn ON Green LED
+      Serial.println("[CMD] Transmission STARTED. Green LED ON.");
+    } 
+    else {
+      int separatorIndex = input.indexOf('-');
+      if (separatorIndex != -1) {
+        String newTarget = input.substring(0, separatorIndex);
+        String command = input.substring(separatorIndex + 1);
+        
         targetUnit = newTarget;
-        isSending = true;
-        Serial.print("Target set to "); Serial.println(targetUnit);
-      } else if (command == "END") {
-        targetUnit = newTarget;
-        isSending = false;
-        Serial.print("Target set to "); Serial.println(targetUnit);
-        Serial.println("Transmission stopped");
-      } else {
-        Serial.println("Invalid command. Use N01-START or N01-END");
-      }
-    } else {
-      Serial.println("Format: N01-START");
+        
+        if (command == "START") {
+          isSending = true;
+          digitalWrite(GREEN_LED_PIN, HIGH);
+          Serial.print("[CMD] Target updated to: "); Serial.println(targetUnit);
+          Serial.println("[CMD] Transmission STARTED. Green LED ON.");
+        } 
+        else if (command == "END") {
+          isSending = false;
+          digitalWrite(GREEN_LED_PIN, LOW);
+          Serial.print("[CMD] Target updated to: "); Serial.println(targetUnit);
+          Serial.println("[CMD] Transmission STOPPED. Green LED OFF.");
+        } 
+        else {
+          Serial.println("[ERROR] Unknown target command. Format: N01-START");
+        }
+      } 
     }
   }
 
-  // -------- Read GPS data --------
+  // -------- 2. Read Incoming GPS Data --------
   while (Serial2.available() > 0) {
     gps.encode(Serial2.read());
   }
 
-  // -------- Send packet if GPS fix and enabled --------
-  if (isSending && millis() - lastSend >= interval) {
-    lastSend = millis();
+  // -------- 3. Send LoRa Packet at Interval --------
+  if (isSending && (millis() - lastSendTime >= sendInterval)) {
+    lastSendTime = millis();
 
-    double lat = 0.0, lon = 0.0;
-    bool fix = gps.location.isValid();
-    if (fix) {
-      lat = gps.location.lat();
-      lon = gps.location.lng();
+    String latStr = "0.000000";
+    String lonStr = "0.000000";
+    String dirStr = "N/A";
+    
+    // Process GPS coordinates if a valid lock is found
+    if (gps.location.isValid()) {
+      double lat = gps.location.lat();
+      double lon = gps.location.lng();
+      
+      latStr = String(lat, 6);
+      lonStr = String(lon, 6);
+      
+      // Get movement direction from GPS Course
+      if (gps.course.isValid()) {
+        dirStr = getCardinalDirection(gps.course.deg());
+      }
     }
 
-    // Compute direction (only if GPS fix)
-    String dir = "N/A";
-    if (fix) {
-      dir = getDirectionToDest(lat, lon);
-    }
+    // Build the packet format: N01,LAT=9.450060,LON=77.564244,DIR=NW
+    String loraPacket = targetUnit + ",LAT=" + latStr + ",LON=" + lonStr + ",DIR=" + dirStr;
 
-    // Build packet: targetUnit, GPS data, and direction
-    String packet = targetUnit + ",";
-    packet += "LAT=" + String(lat, 6) + ",";
-    packet += "LON=" + String(lon, 6) + ",";
-    packet += "DIR=" + dir;
-
-    // Send via LoRa
+    // Transmit over LoRa
     LoRa.beginPacket();
-    LoRa.print(packet);
+    LoRa.print(loraPacket);
     LoRa.endPacket();
 
+    // Print to Serial Monitor for debugging
     Serial.print("Sent: ");
-    Serial.println(packet);
+    Serial.println(loraPacket);
   }
 }
