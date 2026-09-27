@@ -1,6 +1,6 @@
-# LoRa & GPS-Based Emergency Vehicle Priority Traffic Control System
+# LoRa & GPS-Based Emergency Vehicle Priority Traffic Control Prototype
 
-This project is an IoT-based Smart Traffic Control System designed to prioritize emergency vehicles (such as ambulances, fire trucks, or police cars) at a 4-way traffic junction. The system comprises two main components:
+This project is an IoT-based traffic-control prototype designed to demonstrate emergency-vehicle priority at a four-way junction using ESP32, GPS, and LoRa communication. The system comprises two main components:
 1. **Transmitter (Emergency Vehicle Unit)**: Reads real-time GPS data, determines the vehicle's heading, and broadcasts this information over LoRa.
 2. **Receiver (Junction Control Unit)**: Listens for incoming LoRa transmissions and overrides the normal traffic light cycle to give green-light priority to the approaching emergency vehicle's direction.
 
@@ -86,8 +86,8 @@ The receiver governs the LoRa module and 4 pairs of Red and Green LEDs represent
 ## 📂 Codebase Overview
 
 The codebase is split into two directories:
-*   [`TRANSMITTER/TRANSMITTER.ino`](file:///d:/rit%20seed%20project/TRANSMITTER/TRANSMITTER.ino): Code running on the emergency vehicle's ESP32.
-*   [`RECEIVER/RECEIVER.ino`](file:///d:/rit%20seed%20project/RECEIVER/RECEIVER.ino): Code running on the traffic junction's ESP32.
+*   [`TRANSMITTER/TRANSMITTER.ino`](TRANSMITTER/TRANSMITTER.ino): Firmware for the emergency-vehicle ESP32.
+*   [`RECEIVER/RECEIVER.ino`](RECEIVER/RECEIVER.ino): Firmware for the junction-controller ESP32.
 
 ### Third-Party Library Dependencies
 Ensure you install these libraries in your Arduino IDE before uploading:
@@ -151,9 +151,20 @@ You can send text commands to the Transmitter through the Arduino Serial Monitor
     *   Go to **Tools** $\rightarrow$ **Board** $\rightarrow$ **Boards Manager** and install `esp32`.
     *   Select **ESP32 Dev Module** from the board selection menu.
 3.  **Uploading the Firmware**:
-    *   Connect the Transmitter ESP32 to your PC, open [`TRANSMITTER/TRANSMITTER.ino`](file:///d:/rit%20seed%20project/TRANSMITTER/TRANSMITTER.ino), select the COM port, and upload.
-    *   Connect the Receiver ESP32 to your PC, open [`RECEIVER/RECEIVER.ino`](file:///d:/rit%20seed%20project/RECEIVER/RECEIVER.ino), select the COM port, and upload.
+    *   Connect the Transmitter ESP32 to your PC, open [`TRANSMITTER/TRANSMITTER.ino`](TRANSMITTER/TRANSMITTER.ino), select the COM port, and upload.
+    *   Connect the Receiver ESP32 to your PC, open [`RECEIVER/RECEIVER.ino`](RECEIVER/RECEIVER.ino), select the COM port, and upload.
 4.  **Testing**:
     *   Keep the Transmitter serial monitor open to verify GPS lock and LoRa status.
     *   Use the serial commands (`START` / `END`) to simulate emergency vehicle status transitions.
     *   Observe the traffic light LEDs on the Receiver to verify normal cycles and emergency overrides.
+
+
+---
+
+## Safety Notice
+
+This repository is an **educational prototype**, not a certified traffic controller.
+
+Before any real-road deployment, the design would require independent engineering review, fail-safe traffic-signal transitions, electrical isolation, watchdog/conflict monitoring, authenticated communications, field validation, legal/regulatory approval, and integration with certified traffic-signal hardware.
+
+Do not connect prototype GPIO outputs directly to real traffic infrastructure.
